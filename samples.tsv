@@ -1,0 +1,3 @@
+Sample	Replicate	Control	Fastq1	Fastq2
+Sample1_IP	1	Sample1_Input	Sample1_IP_R1_001.fastq.gz	Sample1_IP_R2_001.fastq.gz
+Sample1_Input	1		Sample1_INPUT_R1_001.fastq.gz	Sample1_INPUT_R2_001.fastq.gz

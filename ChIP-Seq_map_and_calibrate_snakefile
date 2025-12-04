@@ -1,0 +1,542 @@
+
+import pandas as pd
+import os
+
+##GLOBALS##
+
+configfile: "config.yaml"
+
+samples = pd.read_table(config["samples"]).set_index("Sample", drop=False)
+print(samples)
+
+## Get list of output files for IP samples and their control
+IP = samples[samples.Control.notnull()]
+calib_out=[]
+for ip in IP.Sample:
+    control = IP.loc[ip,"Control"]
+    calib_out.append("calibrate/{}.{}.experimental.only.MT.rDNA.rpm.calibrated.bedgraph".format(ip,control))
+    calib_out.append("calibrate/{}.{}.experimental.only.MT.rDNA.rpm.calibrated.bw".format(ip,control))
+
+## other workflow variables
+raw_dir = config["raw_dir"]
+cal_ref = config["cal_ref"]
+exp_ref = config["exp_ref"]
+cal_chr = config["cal_chr"]
+exp_chr = config["exp_chr"]
+blacklist = config["blacklist"]
+fwd_adap = config["fwd_adap"]
+rev_adap = config["rev_adap"]
+exp_chr_filt = config["exp_chr_filt"]
+cal_chr_filt = config["cal_chr_filt"]
+
+## Tools
+fastqc_ver = config["fastqc"]
+fastq_screen_ver = config["fastq_screen"]
+multiqc_ver = config["multiqc"]
+cutadapt_ver = config["cutadapt"]
+minimap2_ver = config["minimap2"]
+samtools_ver = config["samtools"]
+bedtools_ver = config["bedtools"]
+wigToBigWig_ver = config["wigToBigWig"]
+
+##Functions
+
+##Rules
+
+rule all:
+  input:
+    expand("fastq/{sample}.{read}.fastq.gz",sample=samples.Sample,read=[1,2]),
+    expand("fastq/{sample}.{read}_fastqc.html",sample=samples.Sample,read=[1,2]),
+    expand("fastq/{sample}.{read}_screen.html",sample=samples.Sample,read=[1,2]),
+    "fastq/multiqc_report.html",
+    expand("cutadapt/{sample}.{read}.trimmed.fastq.gz",sample=samples.Sample,read=[1,2]),
+    expand("fastq/{sample}.{read}_fastqc.html",sample=samples.Sample,read=[1,2]),
+    "cutadapt/multiqc_report.html",
+    expand("miniMap2_out_calibration_genome/{sample}.calibration.mm2.unmapped.fastq.gz",sample=samples.Sample),
+    expand("miniMap2_out_experimental_genome/{sample}.experimental.mm2.unmapped.fastq.gz",sample=samples.Sample),
+    expand("miniMap2_out_calibration_genome_only/{sample}.calibration.only.mm2.bam",sample=samples.Sample),
+    expand("miniMap2_out_calibration_genome_only/{sample}.calibration.only.mm2.bam.bai",sample=samples.Sample),
+    expand("miniMap2_out_calibration_genome_only/{sample}.calibration.only.mm2.chrMT.bam",sample=samples.Sample),
+    expand("miniMap2_out_calibration_genome_only/{sample}.calibration.only.mm2.chrMT.bam.bai",sample=samples.Sample),
+    expand("miniMap2_out_calibration_genome_only/{sample}.calibration.only.mm2.chrMT.bam.fs",sample=samples.Sample),
+    expand("miniMap2_out_calibration_genome_only/{sample}.calibration.only.chrMT.rpm.bedgraph",sample=samples.Sample),
+    expand("miniMap2_out_calibration_genome_only/{sample}.calibration.only.chrMT.rpm.bw",sample=samples.Sample),
+    expand("miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.bam",sample=samples.Sample),
+    expand("miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.bam.bai",sample=samples.Sample),
+    expand("miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.chrMT.bam",sample=samples.Sample),
+    expand("miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.chrMT.bam.bai",sample=samples.Sample),
+    expand("miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.chrMT.rDNA.bam",sample=samples.Sample),
+    expand("miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.chrMT.rDNA.bam.bai",sample=samples.Sample),
+    expand("miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.chrMT.rDNA.bam.fs",sample=samples.Sample),
+    expand("miniMap2_out_experimental_genome_only/{sample}.experimental.only.chrMT.rDNA.rpm.bedgraph",sample=samples.Sample),
+    expand("miniMap2_out_experimental_genome_only/{sample}.experimental.only.chrMT.rDNA.rpm.bw",sample=samples.Sample),
+    calib_out
+
+rule get_fastq:
+  input:
+    lambda wildcards: raw_dir+"/"+samples.loc[wildcards.sample, 'Fastq'+wildcards.read],
+  output:
+    "fastq/{sample}.{read}.fastq.gz",
+  shell:
+    """
+    ln -s {input} {output}
+    """
+
+rule fastqc_raw:
+  input:
+    "fastq/{sample}.{read}.fastq.gz"
+  threads: 4
+  params:
+    fastqc = fastqc_ver
+  output:
+    "fastq/{sample}.{read}_fastqc.html"
+  shell:
+    "{params.fastqc} {input}"
+
+rule fastq_screen_raw:
+  input:
+    "fastq/{sample}.{read}.fastq.gz"
+  threads: 4
+  params:
+    fastq_screen = fastq_screen_ver,
+    conf = "/homes/genomes/tool_configs/fastq_screen/fastq_screen.conf"
+  output:
+    "fastq/{sample}.{read}_screen.html"
+  shell:
+    "{params.fastq_screen} -c {params.conf}  --outdir fastq {input}"
+
+rule multiqc_raw:
+  input:
+    expand("fastq/{sample}.{read}_fastqc.html",sample=samples.Sample,read=[1,2]),
+    expand("fastq/{sample}.{read}_screen.html",sample=samples.Sample,read=[1,2])
+  params:
+    multiqc = multiqc_ver
+  output:
+    "fastq/multiqc_report.html"
+  shell:
+    "{params.multiqc} -f fastq -o fastq"
+
+rule cutadapt:
+  input:
+    r1 = "fastq/{sample}.1.fastq.gz",
+    r2 = "fastq/{sample}.2.fastq.gz"
+  params:
+    fwd= fwd_adap,
+    rev = rev_adap,
+    q = 10,
+    minl = 65,
+    cutadapt = cutadapt_ver
+  log: "cutadapt/{sample}.cutadapt_report.txt"
+  output:
+    r1 = "cutadapt/{sample}.1.trimmed.fastq.gz",
+    r2 = "cutadapt/{sample}.2.trimmed.fastq.gz"
+  shell:
+    "{params.cutadapt} -a {params.fwd} -A {params.rev} -q {params.q} --minimum-length {params.minl} -o {output.r1} -p {output.r2} {input.r1} {input.r2} > {log}"
+
+rule fastqc_cutadapt:
+  input:
+    "cutadapt/{sample}.{read}.trimmed.fastq.gz"
+  threads: 4
+  params:
+    fastqc = fastqc_ver
+  output:
+    "cutadapt/{sample}.{read}.trimmed_fastqc.html"
+  shell:
+    "{params.fastqc} {input}"
+
+rule multiqc_cutadapt:
+  input:
+    expand("cutadapt/{sample}.{read}.trimmed_fastqc.html",sample=samples.Sample,read=[1,2])
+  params:
+    multiqc = multiqc_ver
+  output:
+    "cutadapt/multiqc_report.html"
+  shell:
+    "{params.multiqc} -f cutadapt -o cutadapt"
+
+### First mapping to **Calibration** Genome to get unmapped reads
+
+rule minimap2_cal:
+  input:
+    r1 = "cutadapt/{sample}.1.trimmed.fastq.gz",
+    r2 = "cutadapt/{sample}.2.trimmed.fastq.gz"
+  params:
+    cal_ref = cal_ref,
+    minimap2 = minimap2_ver
+  output:
+    temp("miniMap2_out_calibration_genome/{sample}.calibration.mm2.sam")
+  shell:
+    "{params.minimap2} -ax sr {params.cal_ref} {input.r1} {input.r2} > {output}"
+
+rule minimap2_cal_bam:
+  input:
+    "miniMap2_out_calibration_genome/{sample}.calibration.mm2.sam"
+  params:
+    samtools = samtools_ver
+  output:
+    temp("miniMap2_out_calibration_genome/{sample}.calibration.mm2.unmapped.bam"),
+  shell:
+    "{params.samtools} view -Sbh -f 4 {input} -o {output}"
+
+rule minimap2_cal_sort:
+  input:
+    "miniMap2_out_calibration_genome/{sample}.calibration.mm2.unmapped.bam"
+  params:
+    samtools = samtools_ver
+  output:
+    temp("miniMap2_out_calibration_genome/{sample}.calibration.mm2.unmapped.qsort.bam")
+  threads: 5
+  shell:
+    "{params.samtools} sort -n -@ {threads} {input} -o {output}"
+
+rule minimap2_cal_fastq:
+  input:
+    "miniMap2_out_calibration_genome/{sample}.calibration.mm2.unmapped.qsort.bam"
+  params:
+    samtools = samtools_ver
+  output:
+    fastq=temp("miniMap2_out_calibration_genome/{sample}.calibration.mm2.unmapped.fastq"),
+    gz="miniMap2_out_calibration_genome/{sample}.calibration.mm2.unmapped.fastq.gz"
+  shell:
+    """
+    {params.samtools} bam2fq {input} > {output.fastq};
+    gzip -c {output.fastq} > {output.fastq}.gz
+    """
+
+### First mapping to **Experimental** Genome to get unmapped reads
+
+rule minimap2_exp:
+  input:
+    r1 = "cutadapt/{sample}.1.trimmed.fastq.gz",
+    r2 = "cutadapt/{sample}.2.trimmed.fastq.gz"
+  params:
+    exp_ref = exp_ref,
+    minimap2 = minimap2_ver
+  output:
+    temp("miniMap2_out_experimental_genome/{sample}.experimental.mm2.sam")
+  shell:
+    "{params.minimap2} -ax sr {params.exp_ref} {input.r1} {input.r2} > {output}"
+
+rule minimap2_exp_bam:
+  input:
+    "miniMap2_out_experimental_genome/{sample}.experimental.mm2.sam"
+  params:
+    samtools = samtools_ver
+  output:
+    temp("miniMap2_out_experimental_genome/{sample}.experimental.mm2.unmapped.bam")
+  shell:
+    "{params.samtools} view -Sbh -f 4 {input} -o {output}"
+
+rule minimap2_exp_sort:
+  input:
+    "miniMap2_out_experimental_genome/{sample}.experimental.mm2.unmapped.bam"
+  params:
+    samtools = samtools_ver
+  output:
+    temp("miniMap2_out_experimental_genome/{sample}.experimental.mm2.unmapped.qsort.bam")
+  threads: 5
+  shell:
+    "{params.samtools} sort -n -@ {threads} {input} -o {output}"
+
+rule minimap2_exp_fastq:
+  input:
+    "miniMap2_out_experimental_genome/{sample}.experimental.mm2.unmapped.qsort.bam"
+  params:
+    samtools = samtools_ver
+  output:
+    fastq=temp("miniMap2_out_experimental_genome/{sample}.experimental.mm2.unmapped.fastq"),
+    gz="miniMap2_out_experimental_genome/{sample}.experimental.mm2.unmapped.fastq.gz"
+  shell:
+    """
+    {params.samtools} bam2fq {input} > {output.fastq};
+    gzip -c {output.fastq} > {output.fastq}.gz
+    """
+
+### Second mapping to **Calibration** Genome - Reads that don't aling to experimental genome
+
+rule minimap2_cal_2:
+  input:
+    "miniMap2_out_experimental_genome/{sample}.experimental.mm2.unmapped.fastq.gz"
+  params:
+    cal_ref = cal_ref,
+    minimap2 = minimap2_ver
+  output:
+    temp("miniMap2_out_calibration_genome_only/{sample}.calibration.only.mm2.sam")
+  shell:
+    "{params.minimap2} -ax sr {params.cal_ref} {input} > {output}"
+
+rule minimap2_cal_bam_2:
+  input:
+    "miniMap2_out_calibration_genome_only/{sample}.calibration.only.mm2.sam"
+  params:
+    samtools = samtools_ver
+  output:
+    temp("miniMap2_out_calibration_genome_only/{sample}.calibration.only.mm2.unsorted.bam")
+  shell:
+    "{params.samtools} view -Sbh -F 260 -f 3 {input} -o {output}"
+
+rule minimap2_cal_sort_2:
+  input:
+    "miniMap2_out_calibration_genome_only/{sample}.calibration.only.mm2.unsorted.bam"
+  params:
+    samtools = samtools_ver
+  output:
+    "miniMap2_out_calibration_genome_only/{sample}.calibration.only.mm2.bam"
+  threads: 5
+  shell:
+    "{params.samtools} sort -@ {threads} {input} -o {output}"
+
+rule index_bam_cal:
+  input:
+    "miniMap2_out_calibration_genome_only/{sample}.calibration.only.mm2.bam"
+  params:
+    samtools = samtools_ver
+  output:
+    "miniMap2_out_calibration_genome_only/{sample}.calibration.only.mm2.bam.bai"
+  shell:
+    "{params.samtools} index {input}"
+
+rule filter_bam_cal:
+  input:
+    bam="miniMap2_out_calibration_genome_only/{sample}.calibration.only.mm2.bam",
+    index="miniMap2_out_calibration_genome_only/{sample}.calibration.only.mm2.bam.bai"
+  params:
+    chroms = cal_chr_filt,
+    samtools = samtools_ver
+  output:
+    "miniMap2_out_calibration_genome_only/{sample}.calibration.only.mm2.chrMT.bam",
+  shell:
+    "{params.samtools} view -b {input.bam} {params.chroms} > {output}"
+
+rule index_filter_bam_cal:
+  input:
+    bam="miniMap2_out_calibration_genome_only/{sample}.calibration.only.mm2.chrMT.bam"
+  params:
+    samtools = samtools_ver
+  output:
+    "miniMap2_out_calibration_genome_only/{sample}.calibration.only.mm2.chrMT.bam.bai",
+  shell:
+    "{params.samtools} index {input}"
+
+rule flagstat_filter_bam_cal:
+  input:
+    bam="miniMap2_out_calibration_genome_only/{sample}.calibration.only.mm2.chrMT.bam",
+    index="miniMap2_out_calibration_genome_only/{sample}.calibration.only.mm2.chrMT.bam.bai"
+  params:
+    samtools = samtools_ver
+  output:
+    "miniMap2_out_calibration_genome_only/{sample}.calibration.only.mm2.chrMT.bam.fs"
+  shell:
+    "{params.samtools} flagstat {input.bam} > {output}"
+
+rule bedgraph_cal:
+  input:
+    fs="miniMap2_out_calibration_genome_only/{sample}.calibration.only.mm2.chrMT.bam.fs",
+    bam="miniMap2_out_calibration_genome_only/{sample}.calibration.only.mm2.chrMT.bam"
+  params:
+    sample = "{sample}",
+    bedtools = bedtools_ver
+  log:
+    "logs/{sample}_calibration_genome.log"
+  output:
+    "miniMap2_out_calibration_genome_only/{sample}.calibration.only.chrMT.rpm.bedgraph"
+  shell:
+    """
+    num1=`cat {input.fs} | grep N/A | grep mapped | grep N/A |cut -f1 -d ' '`;
+    RPM=`perl -e "print 1000000/$num1"`;
+    echo "{params.sample}: $num1 - The scaling factor is $RPM" >> {log};
+    {params.bedtools} genomecov -ibam {input.bam} -bg -scale $RPM > {output}
+    """
+
+rule wigToBigWig_cal:
+  input:
+    "miniMap2_out_calibration_genome_only/{sample}.calibration.only.chrMT.rpm.bedgraph"
+  params:
+    chr_size = cal_chr,
+    wigToBigWig = wigToBigWig_ver
+  output:
+    "miniMap2_out_calibration_genome_only/{sample}.calibration.only.chrMT.rpm.bw"
+  shell:
+    "{params.wigToBigWig} {input} {params.chr_size} {output}"
+
+### Second mapping to **Experimental** Genome - reads that don't aling to calibration genome
+
+rule minimap2_exp_2:
+  input:
+    "miniMap2_out_calibration_genome/{sample}.calibration.mm2.unmapped.fastq.gz"
+  params:
+    exp_ref = exp_ref,
+    minimap2 = minimap2_ver
+  output:
+    temp("miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.sam")
+  shell:
+    "{params.minimap2} -ax sr {params.exp_ref} {input} > {output}"
+
+rule minimap2_exp_bam_2:
+  input:
+    "miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.sam"
+  params:
+    samtools = samtools_ver
+  output:
+    temp("miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.unsorted.bam")
+  shell:
+    "{params.samtools} view -Sbh -F 260 -f 3 {input} -o {output}"
+
+rule minimap2_exp_sort_2:
+  input:
+    "miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.unsorted.bam"
+  params:
+    samtools = samtools_ver
+  output:
+    "miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.bam"
+  threads: 5
+  shell:
+    "{params.samtools} sort -@ {threads} {input} -o {output}"
+
+rule index_bam_exp_2:
+  input:
+    "miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.bam"
+  params:
+    samtools = samtools_ver
+  output:
+    "miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.bam.bai"
+  shell:
+    "{params.samtools} index {input}"
+
+rule filter_bam_exp_2:
+  input:
+    bam="miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.bam",
+    index="miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.bam.bai"
+  params:
+    chroms = exp_chr_filt,
+    samtools = samtools_ver
+  output:
+    "miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.chrMT.bam"
+  shell:
+    "{params.samtools} view -b {input.bam} {params.chroms} > {output}"
+
+rule index_filter_bam_exp_2:
+  input:
+    bam="miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.chrMT.bam"
+  params:
+    samtools = samtools_ver
+  output:
+    "miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.chrMT.bam.bai"
+  shell:
+    "{params.samtools} index {input}"
+
+rule remove_blacklist_bam_exp_2:
+  input:
+    bam="miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.chrMT.bam",
+    index="miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.chrMT.bam.bai"
+  params:
+    blacklist = blacklist,
+    bedtools = bedtools_ver
+  output:
+    "miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.chrMT.rDNA.bam"
+  shell:
+    "{params.bedtools} intersect -v -abam {input.bam} -b {params.blacklist} > {output}"
+
+rule index_blacklist_bam_exp_2:
+  input:
+    "miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.chrMT.rDNA.bam"
+  params:
+    samtools = samtools_ver
+  output:
+    "miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.chrMT.rDNA.bam.bai"
+  shell:
+    "{params.samtools} index {input}"
+
+rule flagstat_blacklist_bam_exp_2:
+  input:
+    bam="miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.chrMT.rDNA.bam",
+    index="miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.chrMT.rDNA.bam.bai"
+  params:
+    samtools = samtools_ver
+  output:
+    "miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.chrMT.rDNA.bam.fs"
+  shell:
+    "{params.samtools} flagstat {input.bam} > {output}"
+
+rule bedgraph_exp_2:
+  input:
+    fs="miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.chrMT.rDNA.bam.fs",
+    bam="miniMap2_out_experimental_genome_only/{sample}.experimental.only.mm2.chrMT.rDNA.bam",
+  params:
+    sample = "{sample}",
+    bedtools = bedtools_ver
+  log:
+    "logs/{sample}_experimental_genome.log"
+  output:
+    "miniMap2_out_experimental_genome_only/{sample}.experimental.only.chrMT.rDNA.rpm.bedgraph"
+  shell:
+    """
+    num1=`cat {input.fs} | grep N/A | grep mapped | grep N/A |cut -f1 -d ' '`;
+    RPM=`perl -e "print 1000000/$num1"`;
+    echo "{params.sample}: $num1 - The scaling factor is $RPM" >> {log};
+    {params.bedtools} genomecov -ibam {input.bam} -bg -scale $RPM > {output}
+    """
+
+rule wigToBigWig_exp_2:
+  input:
+    "miniMap2_out_experimental_genome_only/{sample}.experimental.only.chrMT.rDNA.rpm.bedgraph"
+  params:
+    chr_size = exp_chr,
+    wigToBigWig = wigToBigWig_ver
+  output:
+    "miniMap2_out_experimental_genome_only/{sample}.experimental.only.chrMT.rDNA.rpm.bw"
+  shell:
+    "{params.wigToBigWig} {input} {params.chr_size} {output}"
+
+
+### Calibration
+
+# calculate OR value
+# Get the number of mapped reads from flagstat
+
+rule calibration:
+  input:
+    IP="miniMap2_out_experimental_genome_only/{IP}.experimental.only.chrMT.rDNA.rpm.bedgraph",
+    fscc = "miniMap2_out_calibration_genome_only/{control}.calibration.only.mm2.chrMT.bam.fs",
+    fsic = "miniMap2_out_calibration_genome_only/{IP}.calibration.only.mm2.chrMT.bam.fs",
+    fsce = "miniMap2_out_experimental_genome_only/{control}.experimental.only.mm2.chrMT.rDNA.bam.fs",
+    fsie = "miniMap2_out_experimental_genome_only/{IP}.experimental.only.mm2.chrMT.rDNA.bam.fs",
+  params:
+    ip = "{IP}",
+    control = "{control}"
+  log:
+    "logs/{IP}_{control}.calibration.log"
+  output:
+    "calibrate/{IP}.{control}.experimental.only.MT.rDNA.rpm.calibrated.bedgraph"
+  shell:
+    """
+    # calibration input
+    num1=`cat {input.fscc} | grep N/A|grep mapped | grep N/A |cut -f1 -d ' '`
+    echo "{params.control} pombe: $num1 (Wc)" >> {log}
+    # experimental IP
+    num2=`cat {input.fsie} | grep N/A|grep mapped | grep N/A |cut -f1 -d ' '`
+    echo "{params.ip} sacCer3: $num2 (IPx)" >> {log}
+    # calibration IP
+    num3=`cat {input.fsic} | grep N/A|grep mapped | grep N/A |cut -f1 -d ' '`
+    echo "{params.ip} pombe: $num3 (IPc)" >> {log}
+    # experimental input
+    num4=`cat {input.fsce} | grep N/A|grep mapped | grep N/A |cut -f1 -d ' '`
+    echo "{params.control} sacCer3: $num4 (Wx)" >> {log}
+    WcIPx=`perl -e "print $num1*$num2"`
+    WxIPc=`perl -e "print $num4*$num3"`
+    OR=`perl -e "print $WcIPx / $WxIPc;"`
+    echo "The occupancy ratio for {params.ip} {params.control} is $OR" >> {log}
+    # Create bedgraph (Calibrated)
+    cat {input.IP} | awk -v OR="$OR" '{{print $1 "\t" $2 "\t"$3 "\t" $4*OR}}' > {output}
+    """
+    
+rule wigToBigWig_calibration:
+  input:
+    "calibrate/{IP}.{control}.experimental.only.MT.rDNA.rpm.calibrated.bedgraph"
+  params:
+    chr_size = exp_chr,
+    wigToBigWig = wigToBigWig_ver
+  output:
+    "calibrate/{IP}.{control}.experimental.only.MT.rDNA.rpm.calibrated.bw"
+  shell:
+    "{params.wigToBigWig} {input} {params.chr_size} {output}"

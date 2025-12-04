@@ -1,0 +1,34 @@
+
+# Sample file
+samples: "samples.tsv"
+
+# Directory where raw data exists - This should be Read Only!
+raw_dir: "/PATH_TO_RAW_DATA" 
+
+# Genome indexes
+cal_ref: "/genomes/s.pombe/ASM294v2.22/ASM294v2.22.fa"
+exp_ref: "/genomes/s.cerevisiae/sacCer3/sacCer3.fa"
+cal_chr: "/genomes/s.pombe/ASM294v2.22/ASM294v2.22.len"
+exp_chr: "/genomes/s.cerevisiae/sacCer3/sacCer3.len"
+
+# Blacklist file (rDNA)
+blacklist: "/genomes/s.cerevisiae/sacCer3/annotation/rDNA_full.bed"
+
+# Adapter sequences
+fwd_adap: "AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC" 
+rev_adap: "AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGTAGATCTCGGTGGTCGCCGTATCATT"
+
+# Chromosomes to include
+exp_chr_filt: "chrI chrII chrIII chrIV chrV chrVI chrVII chrVIII chrIX chrX chrXI chrXII chrXIII chrXIV chrXV chrXVI"
+cal_chr_filt: "I II III"
+
+# Software versions
+cutadapt: "cutadapt-1.18"
+minimap2: "minimap2-2.20"
+samtools: "samtools-1.11"
+bedtools: "bedtools-2.30.0"
+wigToBigWig: "wigToBigWig-377"
+fastqc: "fastqc-0.11.9"
+fastq_screen: "fastq_screen-0.14.0"
+multiqc: "multiqc-1.9"
+
